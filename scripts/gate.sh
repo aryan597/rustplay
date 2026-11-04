@@ -32,6 +32,9 @@ fi
 step "integration tests (real Chromium, local fixtures)"
 cargo test --test integration
 
+step "actionability hit test vs open shadow roots"
+cargo test --test shadow_hit_test
+
 step "evals (8-layer failure modes)"
 cargo test --test evals
 

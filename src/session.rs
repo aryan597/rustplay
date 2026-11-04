@@ -680,7 +680,14 @@ fn probe_js(selector: &str, mode: ProbeMode) -> String {
             const r = el.getBoundingClientRect();
             if (r.width < 1 || r.height < 1) return {{state:'zero_size'}};
             const x = r.left + r.width / 2, y = r.top + r.height / 2;
-            const hit = document.elementFromPoint(x, y);
+            // elementFromPoint stops at a shadow host, so descend through open
+            // roots or every element inside one looks obscured by its host.
+            let hit = document.elementFromPoint(x, y);
+            while (hit && hit.shadowRoot) {{
+              const inner = hit.shadowRoot.elementFromPoint(x, y);
+              if (!inner || inner === hit) break;
+              hit = inner;
+            }}
             if (hit && hit !== el && !el.contains(hit)) {{
               const d = hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') +
                 (typeof hit.className === 'string' && hit.className.trim() ? '.' + hit.className.trim().split(/\s+/).join('.') : '');

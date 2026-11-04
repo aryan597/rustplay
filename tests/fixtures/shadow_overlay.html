@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Shadow overlay fixture</title>
+  <style>
+    #under { position: absolute; top: 60px; left: 40px; width: 120px; height: 40px; }
+  </style>
+</head>
+<body>
+  <!-- A plain-DOM button, covered by an overlay that lives inside an open
+       shadow root. document.elementFromPoint retargets to the shadow host, so
+       a probe that does not descend blames the host instead of the overlay. -->
+  <button id="under">Under</button>
+  <div id="over-host"></div>
+
+  <script>
+    const root = document.getElementById('over-host').attachShadow({ mode: 'open' });
+    root.innerHTML =
+      '<div id="veil" style="position:fixed;top:0;left:0;width:100%;height:100%;' +
+      'background:rgba(0,0,0,0.1)"></div>';
+  </script>
+</body>
+</html>
