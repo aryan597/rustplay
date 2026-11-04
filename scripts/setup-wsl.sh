@@ -15,8 +15,8 @@ say "apt packages (build tools, bubblewrap, fonts)"
 sudo apt-get update -qq
 sudo apt-get install -y -qq build-essential pkg-config curl ca-certificates bubblewrap fonts-liberation
 
-# Ubuntu's `chromium-browser` package is a snap shim, and snaps do not run
-# reliably under WSL. Use Google's .deb instead (it also ships the setuid
+# Ubuntu's `chromium-browser` package is a snap shim, and rustplay refuses
+# snap browsers (private /tmp, rebuilt environment). Use Google's .deb instead (it also ships the setuid
 # chrome-sandbox helper, so Chromium's sandbox works as a normal user).
 if ! command -v google-chrome >/dev/null 2>&1; then
   say "Google Chrome stable"

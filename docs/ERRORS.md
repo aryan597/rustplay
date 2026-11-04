@@ -11,7 +11,7 @@ Codes are a stable API. `retryable: true` means an identical retry can succeed w
 
 | Code | Meaning | Retryable | Exit | Typical fix |
 |---|---|---|---|---|
-| `LAUNCH_FAILED` | Chromium did not start, exited early, or never answered the first CDP command; last stderr lines and exit status in message | no | 3 | `rustplay doctor`; install Chromium; sandbox flags |
+| `LAUNCH_FAILED` | Chromium did not start, exited early, or never answered the first CDP command (last stderr lines and exit status in message); or no usable browser was found, including a refused snap-packaged Chromium | no | 3 | `rustplay doctor`; install Chrome's `.deb` or chrome-headless-shell; sandbox flags |
 | `SANDBOX_UNAVAILABLE` | `--isolation bwrap` requested but unusable | no | 3 | install bubblewrap or use `--isolation none` |
 | `TRANSPORT_UNSUPPORTED` | `--cdp-transport pipe` on a platform without inheritable fds (non-unix) | no | 3 | `--cdp-transport tcp` (deprecated) |
 | `CDP_PORT_EXPOSED` | in pipe mode, the browser tree was found listening on TCP right after launch; the session is killed | no | 3 | should never happen; look for a wrapper adding `--remote-debugging-port`; report a bug |

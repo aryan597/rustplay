@@ -48,6 +48,7 @@ Best practical setup on Linux: run as a non-root user with unprivileged user nam
 ## Known limits (be honest about these)
 
 - **DevTools port (resolved by default).** Pipe mode opens none. The deprecated `--cdp-transport tcp` still listens on a random 127.0.0.1 port for the session's lifetime, reachable by local processes; the report carries `TCP_TRANSPORT_DEPRECATED`.
+- **Snap Chromium is refused.** snapd runs it with a private `/tmp`, a rebuilt environment and its own path restrictions, so the profile rustplay creates and deletes isn't the one Chrome uses. `sandbox::snap_reason` detects snap binaries and Ubuntu's `chromium-browser` shim; autodetection skips them and explicit paths fail.
 - **Pipe transport relies on a vendored chromiumoxide patch** (`vendor/chromiumoxide`, see `docs/upstream/`). Security fixes in upstream chromiumoxide must be pulled into the vendored copy until the patch lands upstream.
 - **IP-literal subresources** bypass the resolver allowlist (a page can embed `http://203.0.113.5/x`). Navigation to IP literals is still checked. Fix: request interception (roadmap).
 - **Injection flags are heuristics.** They catch common phrasing, not adversarial paraphrase. Treat `untrusted_content: true` as the real signal and keep an agent-side guard.

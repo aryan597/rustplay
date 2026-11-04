@@ -64,7 +64,7 @@ cargo build --release                       # or: cargo install --path .
 
 Prebuilt Linux x86_64 binaries are attached to [releases](https://github.com/aryan597/rustplay/releases).
 
-Browser lookup: `--chrome PATH`, then `$RUSTPLAY_CHROME`, then `chromium`, `chromium-browser`, `google-chrome(-stable)`, `chrome`, `chrome-headless-shell` on `PATH`, then the macOS app bundles. On Ubuntu, prefer Google's `.deb` over the `chromium` snap. `chrome-headless-shell` runs a task about 2.6x faster than full Chrome and uses less memory (see [benchmarks](docs/BENCHMARKS.md)).
+Browser lookup: `--chrome PATH`, then `$RUSTPLAY_CHROME`, then `google-chrome(-stable)`, `chromium`, `chromium-browser`, `chrome`, `chrome-headless-shell` on `PATH`, then the macOS app bundles. **Snap-packaged Chromium is refused**: snapd gives it a private `/tmp` and its own environment, so rustplay can't guarantee cleanup or confinement. On Ubuntu that includes `apt install chromium-browser`, so install Google's `.deb` or `chrome-headless-shell` instead. `chrome-headless-shell` runs a task about 2.6x faster than full Chrome and uses less memory (see [benchmarks](docs/BENCHMARKS.md)).
 
 **Running as root** (Docker, CI): Chromium's sandbox will not start as root. Use a normal user. Otherwise pass `--no-chrome-sandbox`, ideally with `--isolation bwrap`; rustplay never drops the sandbox silently.
 

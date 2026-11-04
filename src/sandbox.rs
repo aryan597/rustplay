@@ -298,27 +298,70 @@ pub fn which(bin: &str) -> Option<PathBuf> {
 }
 
 /// Locate a Chrome/Chromium binary.
-pub fn find_chrome(explicit: Option<&Path>) -> Result<PathBuf> {
-    if let Some(p) = explicit {
-        return if p.is_file() {
-            Ok(p.to_path_buf())
-        } else {
-            Err(RpError::Launch {
-                reason: format!("--chrome path `{}` does not exist", p.display()),
-                hint: Some("pass the full path to a Chrome or Chromium binary".into()),
-            })
-        };
+const INSTALL_HINT: &str = "install Google Chrome from its .deb (https://www.google.com/chrome/), or \
+     chrome-headless-shell (`npx @puppeteer/browsers install chrome-headless-shell@stable`), \
+     then pass --chrome or set RUSTPLAY_CHROME";
+
+/// Is this a snap-packaged Chromium (or a wrapper that execs one)?
+///
+/// snapd runs the browser in its own confinement: a private `/tmp`, an
+/// environment rebuilt by snapd, and no access to arbitrary paths. That breaks
+/// rustplay's guarantees (the profile it creates and cleans up is not the one
+/// Chrome uses; downloads and file URLs under /tmp are invisible), so snap
+/// builds are refused rather than half-working.
+pub fn snap_reason(p: &Path) -> Option<String> {
+    let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if canon.starts_with("/snap/") || canon.file_name().is_some_and(|n| n == "snap") {
+        return Some(format!("{} resolves to {} (snap)", p.display(), canon.display()));
     }
-    if let Some(p) = std::env::var_os("RUSTPLAY_CHROME").map(PathBuf::from) {
-        if p.is_file() {
-            return Ok(p);
+    // Ubuntu's /usr/bin/chromium-browser is a shell script that execs the snap.
+    let mut head = [0u8; 4096];
+    let n = std::fs::File::open(&canon).and_then(|mut f| std::io::Read::read(&mut f, &mut head)).unwrap_or(0);
+    let head = &head[..n];
+    if head.starts_with(b"#!") {
+        let text = String::from_utf8_lossy(head);
+        if text.contains("/snap/") || text.contains("snap run") {
+            return Some(format!("{} is a wrapper script that launches the snap", p.display()));
         }
     }
+    None
+}
+
+fn refuse_snap(why: String) -> RpError {
+    RpError::Launch {
+        reason: format!(
+            "snap-packaged Chromium is not supported: {why}. snapd gives it a private /tmp and its own \
+             environment, so rustplay cannot guarantee profile cleanup, env scrubbing or download confinement"
+        ),
+        hint: Some(INSTALL_HINT.into()),
+    }
+}
+
+/// Locate a Chrome/Chromium binary. Explicit choices (`--chrome`, `$RUSTPLAY_CHROME`)
+/// must exist and must not be snap builds; autodetection skips snap builds.
+pub fn find_chrome(explicit: Option<&Path>) -> Result<PathBuf> {
+    let env = std::env::var_os("RUSTPLAY_CHROME").map(PathBuf::from);
+    if let Some((p, src)) = explicit.map(|p| (p.to_path_buf(), "--chrome")).or(env.map(|p| (p, "RUSTPLAY_CHROME"))) {
+        if !p.is_file() {
+            return Err(RpError::Launch {
+                reason: format!("{src} path `{}` does not exist", p.display()),
+                hint: Some("pass the full path to a Chrome or Chromium binary".into()),
+            });
+        }
+        if let Some(why) = snap_reason(&p) {
+            return Err(refuse_snap(why));
+        }
+        return Ok(p);
+    }
+    let mut skipped = Vec::new();
     for name in
-        ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "chrome-headless-shell"]
+        ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "chrome-headless-shell"]
     {
         if let Some(p) = which(name) {
-            return Ok(p);
+            match snap_reason(&p) {
+                None => return Ok(p),
+                Some(why) => skipped.push(why),
+            }
         }
     }
     for p in [
@@ -329,10 +372,10 @@ pub fn find_chrome(explicit: Option<&Path>) -> Result<PathBuf> {
             return Ok(PathBuf::from(p));
         }
     }
-    Err(RpError::Launch {
-        reason: "no Chrome/Chromium binary found".into(),
-        hint: Some("install chromium (`apt install chromium`) or pass --chrome / set RUSTPLAY_CHROME".into()),
-    })
+    if !skipped.is_empty() {
+        return Err(refuse_snap(skipped.join("; ")));
+    }
+    Err(RpError::Launch { reason: "no Chrome/Chromium binary found".into(), hint: Some(INSTALL_HINT.into()) })
 }
 
 pub fn is_root() -> bool {
@@ -372,6 +415,34 @@ mod tests {
         assert!(a.contains(&"--user-data-dir=/p".to_string()));
         assert!(a.iter().any(|x| x == "--no-startup-window"));
         assert!(!a.iter().any(|x| !x.starts_with("--")), "no positional URL: rustplay opens its page over CDP: {a:?}");
+    }
+
+    #[test]
+    fn snap_chromium_is_detected_and_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let script = |name: &str, body: &str| {
+            let p = d.path().join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        // Ubuntu 24.04's /usr/bin/chromium-browser shim.
+        let shim = script("chromium-browser", "#!/bin/sh\nexec /snap/bin/chromium \"$@\"\n");
+        assert!(snap_reason(&shim).is_some());
+        let e = find_chrome(Some(&shim)).unwrap_err();
+        assert_eq!(e.code(), "LAUNCH_FAILED");
+        assert!(e.to_string().contains("snap") && e.hint().unwrap().contains(".deb"), "{e}");
+        // A symlink into /snap/bin (-> /usr/bin/snap on real hosts) is caught by its target name.
+        let link = d.path().join("chromium");
+        std::os::unix::fs::symlink(d.path().join("snap"), &link).unwrap();
+        std::fs::write(d.path().join("snap"), "\x7fELF").unwrap();
+        assert!(snap_reason(&link).is_some());
+        // Ordinary wrappers and binaries are fine.
+        let ok = script("google-chrome", "#!/bin/sh\nexec /opt/google/chrome/chrome \"$@\"\n");
+        assert!(snap_reason(&ok).is_none());
+        assert_eq!(find_chrome(Some(&ok)).unwrap(), ok);
+        assert_eq!(find_chrome(Some(&d.path().join("missing"))).unwrap_err().code(), "LAUNCH_FAILED");
     }
 
     #[test]

@@ -2,6 +2,17 @@
 
 All notable changes. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/); before 1.0, minor versions may break the CLI or JSON output.
 
+## [0.2.2] - 2026-11-04
+
+### Fixed
+- CI on Ubuntu 24.04 installed the snap build of Chromium (`apt install chromium-browser`), which broke the downloads, bwrap and environment evals. CI now uses Chrome for Testing via `browser-actions/setup-chrome`.
+- The root cgroup v2 CI step piped `cargo test` into `tee`, which hid test failures. Its exit status is now checked.
+- macOS: two cgroup unit tests ran there and failed by design. They are Linux-only now, with a macOS test asserting limits fail closed.
+
+### Changed
+- **Snap-packaged Chromium is refused** with `LAUNCH_FAILED` and an install hint. snapd gives it a private `/tmp` and a rebuilt environment, so rustplay's profile cleanup, env scrubbing and download confinement can't be guaranteed. Autodetection skips snap builds (including Ubuntu's `/usr/bin/chromium-browser` shim), and an explicit `--chrome` / `$RUSTPLAY_CHROME` pointing at one is an error.
+- Browser lookup now prefers `google-chrome` over `chromium`. A `$RUSTPLAY_CHROME` that doesn't exist is now an error instead of being silently ignored.
+
 ## [0.2.1] - 2026-11-04
 
 ### Fixed
@@ -39,6 +50,7 @@ All notable changes. Format: [Keep a Changelog](https://keepachangelog.com/en/1.
 - Roles (viewer / operator / admin), prompt-injection flags and PII redaction on page-derived output.
 - Local HTTP API with bearer tokens and 429 burst control.
 
+[0.2.2]: https://github.com/aryan597/rustplay/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/aryan597/rustplay/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/aryan597/rustplay/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aryan597/rustplay/releases/tag/v0.1.0

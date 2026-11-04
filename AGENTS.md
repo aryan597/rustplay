@@ -92,7 +92,8 @@ Source of truth: `actions::Step` and `actions::ACTIONS`. Schema: `docs/task.sche
 11. **The per-session `--user-data-dir` is mandatory.** `sandbox::ensure_session_profile` runs before every spawn; do not add an option to reuse or omit a profile.
 12. **Limits fail closed.** A requested cpu/memory limit that cannot be enforced is `LIMIT_UNSUPPORTED`, never a warning. Join cgroups in `pre_exec` (before exec), not after spawn. Stop the watchdog before reaping the browser. cgroup self-relocation (`limits::enable_controller`) only ever moves rustplay's own pid, never anyone else's.
 13. **`pre_exec` code is async-signal-safe only**: raw syscalls (`dup2`, `fcntl`, `write`, `prctl`), no allocation, no locks, no logging.
-14. **`vendor/chromiumoxide` changes go through the patch.** Edit the vendored source, then regenerate `docs/upstream/chromiumoxide-cdp-transport.patch` against pristine 0.9.1; `vendored_chromiumoxide_matches_patch` checks they agree.
+14. **No snap browsers.** `sandbox::find_chrome` refuses snap-packaged Chromium (private `/tmp`, rebuilt env). CI uses Chrome for Testing; never `apt install chromium-browser` on Ubuntu.
+15. **`vendor/chromiumoxide` changes go through the patch.** Edit the vendored source, then regenerate `docs/upstream/chromiumoxide-cdp-transport.patch` against pristine 0.9.1; `vendored_chromiumoxide_matches_patch` checks they agree.
 
 ## Adding a step (checklist)
 

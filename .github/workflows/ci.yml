@@ -11,15 +11,28 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install Chromium and bubblewrap
+      # Not apt's chromium-browser: on Ubuntu 24.04 that is a snap, which runs in
+      # its own confinement (private /tmp, rebuilt env) and rustplay refuses it.
+      - name: Install Chrome for Testing
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - name: Install bubblewrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y chromium-browser bubblewrap || sudo apt-get install -y chromium bubblewrap
-          # Ubuntu 24.04 restricts unprivileged user namespaces, which Chromium's sandbox needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 restricts unprivileged user namespaces, which Chromium's
+          # sandbox (and bwrap) need; Chrome for Testing ships no AppArmor profile.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Gate
-        run: scripts/gate.sh
+        env:
+          RUSTPLAY_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          "$RUSTPLAY_CHROME" --version
+          scripts/gate.sh
       - name: Limits on pure cgroup v2 (memory.max path)
+        shell: bash
         # ubuntu-24.04 is pure cgroup v2. Create an empty child of the root cgroup
         # with memory enabled (the root is exempt from the no-internal-processes
         # rule) and run as root so moving the browser into it is permitted.
@@ -27,8 +40,12 @@ jobs:
           sudo mkdir -p /sys/fs/cgroup/rustplay-ci
           echo "+memory +cpu" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
           echo "+memory +cpu" | sudo tee /sys/fs/cgroup/rustplay-ci/cgroup.subtree_control
-          sudo -E env "PATH=$PATH" RUSTPLAY_CGROUP_PARENT=/sys/fs/cgroup/rustplay-ci \
+          sudo env "PATH=$PATH" "HOME=$HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" \
+            "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
+            "RUSTPLAY_CHROME=${{ steps.chrome.outputs.chrome-path }}" \
+            RUSTPLAY_CGROUP_PARENT=/sys/fs/cgroup/rustplay-ci \
             cargo test --test limits -- --nocapture 2>&1 | tee limits.log
+          test "${PIPESTATUS[0]}" -eq 0
           ! grep -q "unsupported on this host" limits.log   # must be real enforcement, not the fallback branch
   macos-build:
     runs-on: macos-14

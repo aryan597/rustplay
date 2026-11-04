@@ -717,6 +717,7 @@ mod tests {
     /// A plain filesystem cannot emulate cgroupfs creating control files on
     /// mkdir, so this covers selection and fail-closed cleanup; the success
     /// path runs against the real kernel in tests/limits.rs.
+    #[cfg(target_os = "linux")] // cgroups exist only on Linux; see non_linux_limits_fail_closed
     #[test]
     fn v2_memory_selected_and_cleaned_up_on_failure() {
         let tmp = tempfile::tempdir().unwrap();
@@ -732,6 +733,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(parent.join("cgroup.subtree_control")).unwrap(), "+memory");
     }
 
+    #[cfg(target_os = "linux")] // cgroups exist only on Linux; see non_linux_limits_fail_closed
     #[test]
     fn explicit_v2_parent_overrides_discovery() {
         let tmp = tempfile::tempdir().unwrap();
@@ -744,6 +746,7 @@ mod tests {
         assert!(!e.to_string().contains("not available"), "{e}");
     }
 
+    #[cfg(target_os = "linux")] // cgroups exist only on Linux; see non_linux_limits_fail_closed
     #[test]
     fn v2_without_memory_controller_falls_back_or_errors() {
         let tmp = tempfile::tempdir().unwrap();
@@ -768,6 +771,19 @@ mod tests {
             std::fs::read_to_string(v1.join("rustplay-y/memory.limit_in_bytes")).unwrap(),
             (512u64 << 20).to_string()
         );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn non_linux_limits_fail_closed() {
+        for lim in [
+            ResourceLimits { memory_bytes: Some(512 << 20), ..Default::default() },
+            ResourceLimits { cpu_ms: Some(1000), ..Default::default() },
+        ] {
+            let e = SessionCgroups::create(&CgroupHost::discover(), "m", &lim, None).unwrap_err();
+            assert_eq!(e.code(), "LIMIT_UNSUPPORTED");
+            assert!(e.to_string().contains("Linux"), "{e}");
+        }
     }
 
     #[test]
