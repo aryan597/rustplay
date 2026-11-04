@@ -1,0 +1,12 @@
+rustplay
+Copyright (c) 2026 Aryan and the rustplay contributors
+Licensed under either of Apache License 2.0 (LICENSE-APACHE) or MIT (LICENSE-MIT), at your option.
+
+This repository includes third-party code:
+
+vendor/chromiumoxide
+  chromiumoxide 0.9.1, Copyright (c) 2020 Matthias Seitz and contributors
+  https://github.com/mattsse/chromiumoxide
+  Licensed under MIT OR Apache-2.0 (see vendor/chromiumoxide/LICENSE-*).
+  Modified by rustplay: pluggable CDP transport and a fix for closed
+  connections. The changes are in docs/upstream/chromiumoxide-cdp-transport.patch.

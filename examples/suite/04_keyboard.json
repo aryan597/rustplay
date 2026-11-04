@@ -1,0 +1,9 @@
+{
+  "name": "enter submits the form",
+  "steps": [
+    { "action": "goto", "url": "${BASE_URL}/" },
+    { "action": "type", "selector": "#name", "text": "Ada" },
+    { "action": "press", "key": "Enter", "selector": "#name" },
+    { "action": "assert_text", "selector": "#out", "matches": "^Submitted Ada$" }
+  ]
+}

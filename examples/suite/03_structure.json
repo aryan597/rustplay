@@ -1,0 +1,11 @@
+{
+  "name": "page structure",
+  "steps": [
+    { "action": "goto", "url": "${BASE_URL}/" },
+    { "action": "assert_visible", "selector": "#title" },
+    { "action": "assert_hidden", "selector": "#hidden" },
+    { "action": "assert_count", "selector": "li.item", "equals": 3 },
+    { "action": "assert_attribute", "selector": "#link", "name": "data-id", "equals": "42" },
+    { "action": "assert_url", "contains": "127.0.0.1" }
+  ]
+}

@@ -1,0 +1,66 @@
+[package]
+name = "rustplay"
+version = "0.2.1"
+edition = "2021"
+rust-version = "1.87"
+description = "Sandboxed headless Chromium automation: CLI, JSON test runner and local HTTP API for untrusted tasks"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/aryan597/rustplay"
+homepage = "https://github.com/aryan597/rustplay"
+documentation = "https://github.com/aryan597/rustplay#readme"
+keywords = ["browser", "automation", "chromium", "sandbox", "headless"]
+categories = ["command-line-utilities", "development-tools::testing", "web-programming"]
+exclude = ["bench/results*.json", ".github/"]
+# Not publishable to crates.io yet: it depends on the vendored chromiumoxide
+# patch via [patch.crates-io], which crates.io ignores. See docs/upstream/.
+publish = false
+
+[lib]
+name = "rustplay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustplay"
+path = "src/main.rs"
+
+[dependencies]
+chromiumoxide = "0.9.1"
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "process", "signal", "time", "sync", "io-util", "fs", "net"] }
+futures = "0.3"
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tempfile = "3.20"
+url = "2.5"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+axum = { version = "0.8", optional = true, default-features = false, features = ["http1", "json", "tokio"] }
+regex = "1"
+
+[features]
+default = ["server"]
+# Local HTTP API (`rustplay serve`). Build with --no-default-features for a CLI-only binary.
+server = ["dep:axum"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["test-util"] }
+
+[patch.crates-io]
+# chromiumoxide 0.9.1 + a transport hook (Connection::with_transport,
+# Browser::connect_with_transport) so CDP can run over --remote-debugging-pipe.
+# Diff: docs/upstream/chromiumoxide-cdp-transport.patch
+chromiumoxide = { path = "vendor/chromiumoxide" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+# panic must unwind so Session::drop runs and kills Chromium.
+panic = "unwind"

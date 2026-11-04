@@ -1,0 +1,18 @@
+{
+  "name": "example-domain-smoke",
+  "options": {
+    "navigation_timeout_ms": 15000,
+    "action_timeout_ms": 5000,
+    "allowed_hosts": ["example.com"],
+    "redact_pii": true
+  },
+  "steps": [
+    { "action": "goto", "url": "https://example.com" },
+    { "action": "wait_for", "selector": "h1", "state": "visible" },
+    { "action": "assert_text", "selector": "h1", "contains": "Example Domain" },
+    { "action": "text", "selector": "p", "all": true },
+    { "action": "attribute", "selector": "a", "name": "href" },
+    { "action": "scroll", "y": 400 },
+    { "action": "screenshot", "path": "shots/example.png", "full_page": true }
+  ]
+}

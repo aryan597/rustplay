@@ -1,0 +1,8 @@
+{
+  "name": "auto-waits for an element that renders late",
+  "steps": [
+    { "action": "goto", "url": "${BASE_URL}/" },
+    { "action": "click", "selector": "#late" },
+    { "action": "assert_text", "selector": "#late", "equals": "Clicked" }
+  ]
+}

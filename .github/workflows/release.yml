@@ -1,0 +1,30 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          v="${GITHUB_REF_NAME}"
+          d="rustplay-${v}-x86_64-unknown-linux-gnu"
+          mkdir "$d"
+          cp target/release/rustplay README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "$d/"
+          tar -czf "$d.tar.gz" "$d"
+          sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" rustplay-*.tar.gz rustplay-*.sha256 \
+            --title "rustplay $GITHUB_REF_NAME" \
+            --notes "See CHANGELOG.md. Linux x86_64 binary; needs Chrome or Chromium installed. Verify with sha256sum -c."

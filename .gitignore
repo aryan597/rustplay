@@ -1,0 +1,5 @@
+/target
+*.png
+!docs/**/*.png
+/rustplay-out
+bench/results-*.json

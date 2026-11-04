@@ -1,0 +1,9 @@
+{
+  "name": "form fills and greets",
+  "steps": [
+    { "action": "goto", "url": "${BASE_URL}/" },
+    { "action": "type", "selector": "#name", "text": "Ferris", "clear": true },
+    { "action": "click", "selector": "#submit" },
+    { "action": "assert_text", "selector": "#out", "equals": "Hello, Ferris" }
+  ]
+}

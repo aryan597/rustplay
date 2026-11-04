@@ -1,0 +1,165 @@
+diff -ruN a/src/browser/mod.rs b/src/browser/mod.rs
+--- a/src/browser/mod.rs	2026-11-04 00:48:22.288282053 +0000
++++ b/src/browser/mod.rs	2026-11-04 00:48:22.296365444 +0000
+@@ -127,7 +127,29 @@
+         }
+ 
+         let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
++        Ok(Self::from_connection(conn, debug_ws_url, config))
++    }
++
++    /// Attach to an already running chromium instance over a custom transport.
++    ///
++    /// Use this for transports other than the DevTools websocket, for example
++    /// `--remote-debugging-pipe`, where no TCP port is opened at all. The
++    /// caller owns the browser process; [`Browser::kill`] is a no-op here.
++    /// `label` is reported by [`Browser::websocket_address`] (e.g. `"pipe"`).
++    pub async fn connect_with_transport(
++        transport: impl crate::conn::CdpTransport + 'static,
++        label: impl Into<String>,
++        config: HandlerConfig,
++    ) -> Result<(Self, Handler)> {
++        let conn = Connection::<CdpEventMessage>::with_transport(transport);
++        Ok(Self::from_connection(conn, label.into(), config))
++    }
+ 
++    fn from_connection(
++        conn: Connection<CdpEventMessage>,
++        debug_ws_url: String,
++        config: HandlerConfig,
++    ) -> (Self, Handler) {
+         let (tx, rx) = channel(1);
+ 
+         let fut = Handler::new(conn, rx, config);
+@@ -140,7 +162,7 @@
+             debug_ws_url,
+             browser_context,
+         };
+-        Ok((browser, fut))
++        (browser, fut)
+     }
+ 
+     /// Launches a new instance of `chromium` in the background and attaches to
+diff -ruN a/src/conn.rs b/src/conn.rs
+--- a/src/conn.rs	2026-11-04 00:48:22.288462150 +0000
++++ b/src/conn.rs	2026-11-04 00:48:22.296519997 +0000
+@@ -3,27 +3,50 @@
+ use std::pin::Pin;
+ use std::task::ready;
+ 
+-use async_tungstenite::tungstenite::Message as WsMessage;
+-use async_tungstenite::{WebSocketStream, tungstenite::protocol::WebSocketConfig};
++pub use async_tungstenite::tungstenite::Error as WsError;
++pub use async_tungstenite::tungstenite::Message as WsMessage;
++use async_tungstenite::tungstenite::protocol::WebSocketConfig;
++use futures::sink::Sink;
+ use futures::stream::Stream;
+ use futures::task::{Context, Poll};
+ use futures::{SinkExt, StreamExt};
+ 
+-use async_tungstenite::tokio::ConnectStream;
+ use chromiumoxide_cdp::cdp::browser_protocol::target::SessionId;
+ use chromiumoxide_types::{CallId, EventMessage, Message, MethodCall, MethodId};
+ 
+ use crate::error::CdpError;
+ use crate::error::Result;
+ 
+-/// Exchanges the messages with the websocket
++/// A bidirectional, message-framed CDP transport.
++///
++/// The default transport is the DevTools websocket. Any other framing (for
++/// example Chrome's `--remote-debugging-pipe`, which uses NUL-delimited JSON on
++/// file descriptors 3 and 4) can be plugged in by adapting it to this trait
++/// and calling [`Connection::with_transport`]. Each CDP message must be one
++/// [`WsMessage::Text`]; end of stream means the browser went away.
++pub trait CdpTransport:
++    Stream<Item = std::result::Result<WsMessage, WsError>>
++    + Sink<WsMessage, Error = WsError>
++    + Send
++    + Unpin
++{
++}
++
++impl<S> CdpTransport for S where
++    S: Stream<Item = std::result::Result<WsMessage, WsError>>
++        + Sink<WsMessage, Error = WsError>
++        + Send
++        + Unpin
++{
++}
++
++/// Exchanges the messages with the browser over a [`CdpTransport`]
+ #[must_use = "streams do nothing unless polled"]
+-#[derive(Debug)]
+ pub struct Connection<T: EventMessage> {
+     /// Queue of commands to send.
+     pending_commands: VecDeque<MethodCall>,
+-    /// The websocket of the chromium instance
+-    ws: WebSocketStream<ConnectStream>,
++    /// The transport to the chromium instance (websocket by default)
++    ws: Box<dyn CdpTransport>,
+     /// The identifier for a specific command
+     next_id: usize,
+     needs_flush: bool,
+@@ -44,14 +67,35 @@
+         )
+         .await?;
+ 
+-        Ok(Self {
++        Ok(Self::with_transport(ws))
++    }
++}
++
++impl<T: EventMessage> Connection<T> {
++    /// Create a connection over an already established transport.
++    ///
++    /// This is how non-websocket transports such as `--remote-debugging-pipe`
++    /// are used; see [`crate::Browser::connect_with_transport`].
++    pub fn with_transport(transport: impl CdpTransport + 'static) -> Self {
++        Self {
+             pending_commands: Default::default(),
+-            ws,
++            ws: Box::new(transport),
+             next_id: 0,
+             needs_flush: false,
+             pending_flush: None,
+             _marker: Default::default(),
+-        })
++        }
++    }
++}
++
++impl<T: EventMessage> std::fmt::Debug for Connection<T> {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("Connection")
++            .field("pending_commands", &self.pending_commands)
++            .field("next_id", &self.next_id)
++            .field("needs_flush", &self.needs_flush)
++            .field("pending_flush", &self.pending_flush)
++            .finish_non_exhaustive()
+     }
+ }
+ 
+diff -ruN a/src/handler/mod.rs b/src/handler/mod.rs
+--- a/src/handler/mod.rs	2026-11-04 00:48:22.289421017 +0000
++++ b/src/handler/mod.rs	2026-11-04 00:48:22.297476418 +0000
+@@ -612,7 +612,18 @@
+ 
+             let mut done = true;
+ 
+-            while let Poll::Ready(Some(ev)) = Pin::new(&mut pin.conn).poll_next(cx) {
++            // `Ready(None)` means the transport closed (browser exited, pipe EOF,
++            // websocket closed). End the handler so pending commands fail now
++            // instead of waiting for their request timeout.
++            loop {
++                let ev = match Pin::new(&mut pin.conn).poll_next(cx) {
++                    Poll::Ready(Some(ev)) => ev,
++                    Poll::Ready(None) => {
++                        tracing::debug!("CDP connection closed; stopping handler");
++                        return Poll::Ready(None);
++                    }
++                    Poll::Pending => break,
++                };
+                 match ev {
+                     Ok(Message::Response(resp)) => {
+                         pin.on_response(resp);

@@ -1,0 +1,493 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aryan597/rustplay/docs/task.schema.json",
+  "title": "rustplay task",
+  "description": "One task runs in one fresh, isolated browser session. Steps run in order; the first failure stops the task. Strings may contain ${BASE_URL} when run via `rustplay test`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "steps"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Can only tighten operator limits, never loosen them.",
+      "properties": {
+        "navigation_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "action_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "task_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "viewport": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 100
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Must be a subset of the operator's --allow-host list, if one is set."
+        },
+        "redact_pii": {
+          "type": "boolean"
+        },
+        "wall_limit_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard wall-clock limit enforced by an OS watchdog that SIGKILLs the browser. Can only lower the operator's --wall-limit."
+        },
+        "cpu_limit_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total CPU time of the browser process tree (Linux cgroups). Can only lower the operator's --cpu-limit."
+        },
+        "memory_limit_mb": {
+          "type": "integer",
+          "minimum": 64,
+          "description": "Memory cap for the browser process tree in MiB (Linux cgroups). Can only lower the operator's --memory-limit."
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Navigate and wait for load. Needs: navigate. Output: {url,title}.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "url"
+            ],
+            "properties": {
+              "action": {
+                "const": "goto"
+              },
+              "url": {
+                "type": "string",
+                "description": "http(s) URL; file:// only with --allow-file-urls"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Poll until the element reaches the state. Needs: read.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector"
+            ],
+            "properties": {
+              "action": {
+                "const": "wait_for"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "state": {
+                "enum": [
+                  "attached",
+                  "visible",
+                  "hidden",
+                  "detached"
+                ],
+                "default": "visible"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Per-step timeout; can only lower --action-timeout"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Auto-waits until visible, enabled and not covered, then sends real mouse events. Needs: interact.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector"
+            ],
+            "properties": {
+              "action": {
+                "const": "click"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Per-step timeout; can only lower --action-timeout"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Focus an editable element and type with key events. Needs: interact.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector",
+              "text"
+            ],
+            "properties": {
+              "action": {
+                "const": "type"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "text": {
+                "type": "string"
+              },
+              "clear": {
+                "type": "boolean",
+                "default": false
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Per-step timeout; can only lower --action-timeout"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Press a key, optionally focusing selector first. Needs: interact.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "key"
+            ],
+            "properties": {
+              "action": {
+                "const": "press"
+              },
+              "key": {
+                "type": "string",
+                "description": "DOM key name, optional modifiers: Enter, Tab, Shift+Tab, Control+a"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Scroll element into view, or by x/y pixels. Needs: interact. Output: {x,y}.",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "scroll"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "x": {
+                "type": "number",
+                "default": 0
+              },
+              "y": {
+                "type": "number",
+                "default": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "innerText of the first (or all) matches. Needs: read. Untrusted output.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector"
+            ],
+            "properties": {
+              "action": {
+                "const": "text"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "all": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Attribute value(s). Needs: read. Untrusted output.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector",
+              "name"
+            ],
+            "properties": {
+              "action": {
+                "const": "attribute"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "all": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Capture page or element. Needs: read (+ write_files with path).",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "screenshot"
+              },
+              "path": {
+                "type": "string",
+                "description": "Relative to --out-dir; .png/.jpg/.jpeg/.webp; no '..'. Omit for inline base64 (max 8 MiB)."
+              },
+              "full_page": {
+                "type": "boolean",
+                "default": false
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Evaluate JS in the page; promises awaited; result returned by value. Needs: eval (admin).",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "expression"
+            ],
+            "properties": {
+              "action": {
+                "const": "eval"
+              },
+              "expression": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fixed delay. Prefer wait_for.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "ms"
+            ],
+            "properties": {
+              "action": {
+                "const": "sleep"
+              },
+              "ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fails with ASSERTION_FAILED unless trimmed text matches all given conditions (at least one required).",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector"
+            ],
+            "properties": {
+              "action": {
+                "const": "assert_text"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "equals": {
+                "type": "string"
+              },
+              "contains": {
+                "type": "string"
+              },
+              "matches": {
+                "type": "string",
+                "description": "Rust regex"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fails unless the element becomes visible in time.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector"
+            ],
+            "properties": {
+              "action": {
+                "const": "assert_visible"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Per-step timeout; can only lower --action-timeout"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fails unless the element is absent or hidden in time.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector"
+            ],
+            "properties": {
+              "action": {
+                "const": "assert_hidden"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Per-step timeout; can only lower --action-timeout"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fails unless exactly N elements match.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector",
+              "equals"
+            ],
+            "properties": {
+              "action": {
+                "const": "assert_count"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "equals": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fails unless location.href contains the string.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "contains"
+            ],
+            "properties": {
+              "action": {
+                "const": "assert_url"
+              },
+              "contains": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Fails unless the attribute equals the value.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "selector",
+              "name",
+              "equals"
+            ],
+            "properties": {
+              "action": {
+                "const": "assert_attribute"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "CSS selector (document.querySelector syntax)"
+              },
+              "name": {
+                "type": "string"
+              },
+              "equals": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

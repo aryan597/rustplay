@@ -1,0 +1,172 @@
+{
+  "machine": {
+    "cpus": 2,
+    "kernel": "6.18.44-fc-v233",
+    "chrome": "Google Chrome for Testing 153.0.8010.12",
+    "playwright": "1.63.0",
+    "rustplay": "rustplay 0.2.1",
+    "root_no_sandbox": true
+  },
+  "scenarios": {
+    "chrome/cold_open_cli": {
+      "rustplay": {
+        "n": 15,
+        "median": 550.4,
+        "p95": 620.8,
+        "min": 512.4
+      },
+      "playwright": {
+        "n": 15,
+        "median": 826.1,
+        "p95": 945.8,
+        "min": 769.9
+      }
+    },
+    "chrome/form_fresh_browser": {
+      "tasks_per_run": 10,
+      "rustplay": {
+        "per_task": {
+          "n": 50,
+          "median": 579.5,
+          "p95": 670,
+          "min": 499
+        },
+        "run_total": {
+          "n": 5,
+          "median": 5885.5,
+          "p95": 6108.9,
+          "min": 5416.8
+        }
+      },
+      "playwright": {
+        "per_task": {
+          "n": 50,
+          "median": 655.2,
+          "p95": 743.7,
+          "min": 559.1
+        },
+        "run_total": {
+          "n": 5,
+          "median": 6815.0,
+          "p95": 6888.8,
+          "min": 6622.2
+        }
+      },
+      "memory_kb": {
+        "rustplay_driver_peak_rss": 14272,
+        "playwright_driver_peak_rss": 160116,
+        "rustplay_tree_peak_pss": 358667,
+        "playwright_tree_peak_pss": 497796
+      }
+    },
+    "chrome/form_parallel_4": {
+      "tasks_per_run": 20,
+      "rustplay": {
+        "run_total": {
+          "n": 5,
+          "median": 10942.8,
+          "p95": 11093.7,
+          "min": 10766.8
+        }
+      },
+      "playwright": {
+        "run_total": {
+          "n": 5,
+          "median": 12583.9,
+          "p95": 13091.4,
+          "min": 12267.7
+        }
+      }
+    },
+    "chrome/form_shared_browser_new_context": {
+      "playwright": {
+        "per_task": {
+          "n": 50,
+          "median": 358.4,
+          "p95": 452.1,
+          "min": 288.9
+        }
+      }
+    },
+    "headless-shell/cold_open_cli": {
+      "rustplay": {
+        "n": 15,
+        "median": 190.8,
+        "p95": 216.3,
+        "min": 177.5
+      },
+      "playwright": {
+        "n": 15,
+        "median": 477.5,
+        "p95": 483.0,
+        "min": 430.7
+      }
+    },
+    "headless-shell/form_fresh_browser": {
+      "tasks_per_run": 10,
+      "rustplay": {
+        "per_task": {
+          "n": 50,
+          "median": 211.0,
+          "p95": 242,
+          "min": 181
+        },
+        "run_total": {
+          "n": 5,
+          "median": 2106.9,
+          "p95": 2173.1,
+          "min": 2059.9
+        }
+      },
+      "playwright": {
+        "per_task": {
+          "n": 50,
+          "median": 254.6,
+          "p95": 296.6,
+          "min": 216.6
+        },
+        "run_total": {
+          "n": 5,
+          "median": 2842.1,
+          "p95": 3007.8,
+          "min": 2790.1
+        }
+      },
+      "memory_kb": {
+        "rustplay_driver_peak_rss": 14220,
+        "playwright_driver_peak_rss": 160520,
+        "rustplay_tree_peak_pss": 188911,
+        "playwright_tree_peak_pss": 332251
+      }
+    },
+    "headless-shell/form_parallel_4": {
+      "tasks_per_run": 20,
+      "rustplay": {
+        "run_total": {
+          "n": 5,
+          "median": 2948.1,
+          "p95": 3035.2,
+          "min": 2717.7
+        }
+      },
+      "playwright": {
+        "run_total": {
+          "n": 5,
+          "median": 3821.8,
+          "p95": 3851.3,
+          "min": 3740.1
+        }
+      }
+    },
+    "headless-shell/form_shared_browser_new_context": {
+      "playwright": {
+        "per_task": {
+          "n": 50,
+          "median": 151.7,
+          "p95": 197.2,
+          "min": 127.1
+        }
+      }
+    }
+  }
+}
