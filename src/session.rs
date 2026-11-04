@@ -50,6 +50,7 @@ pub struct Session {
     cgroups: Option<Arc<SessionCgroups>>,
     enforcement: Enforcement,
     warnings: Vec<ErrorReport>,
+    observe_epoch: u64,
 }
 
 /// Limits, how they were enforced, and what the session actually used.
@@ -248,6 +249,7 @@ impl Session {
             cgroups,
             enforcement,
             warnings,
+            observe_epoch: 0,
         })
     }
 
@@ -372,7 +374,11 @@ impl Session {
             if v.get("state").and_then(Value::as_str) == Some("ok") {
                 return Ok(Ok(v));
             }
-            if v.get("state").and_then(Value::as_str) == Some("invalid_selector") {
+            // Nothing a retry can fix: a bad selector or a dead ref.
+            if matches!(
+                v.get("state").and_then(Value::as_str),
+                Some("invalid_selector" | "stale_ref" | "ref_not_found")
+            ) {
                 return Ok(Err(v));
             }
             if Instant::now() >= deadline {
@@ -388,6 +394,8 @@ impl Session {
             Ok(v) => Ok(json!({ "state": state, "elapsed_ms": v.get("t") })),
             Err(last) => Err(match state_of(&last) {
                 "invalid_selector" => invalid_selector(selector, &last),
+                "stale_ref" => RpError::StaleRef,
+                "ref_not_found" => RpError::RefNotFound,
                 "not_found" | "hidden_wait" if matches!(state, WaitState::Attached | WaitState::Visible) => {
                     if state_of(&last) == "not_found" {
                         RpError::SelectorNotFound { selector: selector.into(), ms }
@@ -504,8 +512,9 @@ impl Session {
     pub async fn scroll(&mut self, selector: Option<&str>, x: f64, y: f64, ms: u64) -> Result<Value> {
         if let Some(sel) = selector {
             self.wait_for(sel, WaitState::Attached, ms).await?;
+            let lookup = resolve_el(sel);
             self.eval_raw(
-                &format!("document.querySelector({}).scrollIntoView({{block:'center', inline:'center', behavior:'instant'}})", js_str(sel)),
+                &format!("{}.scrollIntoView({{block:'center', inline:'center', behavior:'instant'}})", lookup),
                 "scroll",
             )
             .await?;
@@ -517,22 +526,25 @@ impl Session {
 
     pub async fn text(&mut self, selector: &str, all: bool, ms: u64) -> Result<Value> {
         self.wait_for(selector, WaitState::Attached, ms).await?;
-        let s = js_str(selector);
         let expr = if all {
-            format!("Array.from(document.querySelectorAll({s}), e => e.innerText ?? e.textContent)")
+            let lookup = resolve_all(selector);
+            format!("Array.from({}, e => e.innerText ?? e.textContent)", lookup)
         } else {
-            format!("(() => {{ const e = document.querySelector({s}); return e ? (e.innerText ?? e.textContent) : null; }})()")
+            let lookup = resolve_el(selector);
+            format!("(() => {{ const e = {}; return e ? (e.innerText ?? e.textContent) : null; }})()", lookup)
         };
         self.eval_raw(&expr, "text").await
     }
 
     pub async fn attribute(&mut self, selector: &str, name: &str, all: bool, ms: u64) -> Result<Value> {
         self.wait_for(selector, WaitState::Attached, ms).await?;
-        let (s, n) = (js_str(selector), js_str(name));
+        let n = js_str(name);
         let expr = if all {
-            format!("Array.from(document.querySelectorAll({s}), e => e.getAttribute({n}))")
+            let lookup = resolve_all(selector);
+            format!("Array.from({}, e => e.getAttribute({n}))", lookup)
         } else {
-            format!("document.querySelector({s})?.getAttribute({n}) ?? null")
+            let lookup = resolve_el(selector);
+            format!("{}?.getAttribute({n}) ?? null", lookup)
         };
         self.eval_raw(&expr, "attribute").await
     }
@@ -562,6 +574,87 @@ impl Session {
 
     pub async fn eval(&mut self, expression: &str) -> Result<Value> {
         self.eval_raw(expression, "eval").await
+    }
+
+    /// One chunk of a page outline, with refs usable as `ref=<id>` selectors.
+    pub async fn observe(
+        &mut self,
+        selector: Option<&str>,
+        max_nodes: Option<usize>,
+        max_bytes: Option<usize>,
+        cursor: Option<&str>,
+        include_hidden: bool,
+    ) -> Result<(Value, Vec<crate::guard::InjectionFlag>)> {
+        let root = selector.map(resolve_el).unwrap_or_else(|| "document.documentElement".to_string());
+        let script = observe_js(
+            &root,
+            self.observe_epoch + 1,
+            max_nodes.unwrap_or(200),
+            max_bytes.unwrap_or(32 * 1024),
+            cursor,
+            include_hidden,
+        );
+        let mut res = self.eval_raw(&script, "observe").await?;
+
+        if let Some(err) = res.get("error").and_then(Value::as_str) {
+            return Err(match err {
+                "STALE_SNAPSHOT" => RpError::StaleSnapshot,
+                "STALE_REF" => RpError::StaleRef,
+                "REF_NOT_FOUND" => RpError::RefNotFound,
+                _ => RpError::SelectorNotFound {
+                    selector: selector.unwrap_or("<document>").into(),
+                    ms: self.cfg.timeouts.action_ms,
+                },
+            });
+        }
+
+        // The page builds the registry on first observe; keep the Rust-side
+        // counter at least level with it so the next navigation, which wipes
+        // page globals, always issues a higher epoch than any live ref.
+        if let Some(e) = res.get("epoch").and_then(Value::as_u64) {
+            self.observe_epoch = self.observe_epoch.max(e);
+        }
+
+        // Layer 06, per node: a task-level flag cannot tell an agent *which*
+        // element is hostile, and an outline is the richest injection vector
+        // rustplay hands back.
+        let redact = self.cfg.redact_pii;
+        let mut all_flags = Vec::new();
+        if let Some(nodes) = res.get_mut("nodes").and_then(Value::as_array_mut) {
+            for node in nodes {
+                let mut flags = Vec::new();
+                for key in ["name", "src"] {
+                    let Some(text) = node.get(key).and_then(Value::as_str).map(str::to_string) else {
+                        continue;
+                    };
+                    flags.extend(crate::guard::scan_injection(&text));
+                    if redact {
+                        let masked = crate::guard::redact_pii(&text);
+                        if masked != text {
+                            node[key] = json!(masked);
+                        }
+                    }
+                }
+                all_flags.extend(flags.iter().cloned());
+                node["flags"] = json!(flags);
+            }
+        }
+        Ok((res, all_flags))
+    }
+
+    /// How many elements match. A `ref=` selector counts 0 or 1, but reports a
+    /// dead ref as an error rather than silently counting zero.
+    pub async fn count(&mut self, selector: &str) -> Result<u64> {
+        let v = self.eval_raw(&count_js(selector), "assert_count").await?;
+        match state_of(&v) {
+            "ok" => Ok(v.get("n").and_then(Value::as_u64).unwrap_or(0)),
+            "stale_ref" => Err(RpError::StaleRef),
+            "ref_not_found" => Err(RpError::RefNotFound),
+            "invalid_selector" => Err(invalid_selector(selector, &v)),
+            other => {
+                Err(RpError::ActionTimeout { action: format!("count ({other})"), ms: self.cfg.timeouts.action_ms })
+            }
+        }
     }
 
     /// Graceful shutdown. Always kills the process and removes the profile,
@@ -655,8 +748,271 @@ enum ProbeMode {
     Act { editable: bool },
 }
 
+/// Resolve a selector (CSS or `ref=`) to a JS expression that yields the element.
+///
+/// A `ref=` lookup *throws* a `rustplay:` marker rather than yielding null, so
+/// a ref issued under a dead epoch stays distinguishable from one that never
+/// existed. Every caller funnels through `probe_js` or `count_js`, both of which
+/// translate the marker back into an error code.
+fn resolve_el(selector: &str) -> String {
+    if let Some(r) = selector.strip_prefix("ref=") {
+        format!(
+            r#"(() => {{
+              const reg = globalThis[Symbol.for('rustplay.refs')];
+              const id = {id};
+              const at = id.lastIndexOf('@');
+              const ep = at < 0 ? NaN : Number(id.slice(at + 1));
+              if (!Number.isFinite(ep)) throw 'rustplay:ref_not_found';
+              if (!reg || reg.epoch !== ep) throw 'rustplay:stale_ref';
+              const el = reg.map.get(id);
+              if (!el) throw 'rustplay:ref_not_found';
+              return el;
+            }})()"#,
+            id = js_str(r)
+        )
+    } else {
+        format!("document.querySelector({})", js_str(selector))
+    }
+}
+
+/// Resolve a selector to a JS expression that yields an array of elements.
+fn resolve_all(selector: &str) -> String {
+    if selector.starts_with("ref=") {
+        format!("(() => {{ const e = {}; return e ? [e] : []; }})()", resolve_el(selector))
+    } else {
+        format!("document.querySelectorAll({})", js_str(selector))
+    }
+}
+
+/// One round trip: validate the cursor, create or reuse the ref registry,
+/// walk the document in pre-order and return one chunk of the outline.
+///
+/// Numbering counts *every* element the walk visits, whether or not it is
+/// emitted, so refs and cursors mean the same thing regardless of
+/// `include_hidden`. Names come only from an element's own text and its
+/// labelling attributes — never descendant text, or every ancestor would be
+/// named after the whole page.
+fn observe_js(
+    root_lookup: &str,
+    next_epoch: u64,
+    max_nodes: usize,
+    max_bytes: usize,
+    cursor: Option<&str>,
+    include_hidden: bool,
+) -> String {
+    let cursor_js = js_str(cursor.unwrap_or(""));
+    format!(
+        r#"(() => {{
+          const KEY = Symbol.for('rustplay.refs');
+          const cursor = {cursor_js};
+          let reg = globalThis[KEY];
+          if (cursor) {{
+            if (!reg) return {{ error: 'STALE_SNAPSHOT' }};
+            if (Number(cursor.split(':')[0]) !== reg.epoch) return {{ error: 'STALE_SNAPSHOT' }};
+          }}
+          if (!reg) {{ reg = globalThis[KEY] = {{ epoch: {next_epoch}, map: new Map() }}; }}
+          const epoch = reg.epoch;
+
+          let root;
+          try {{ root = {root_lookup}; }}
+          catch (err) {{
+            const m = String((err && err.message) || err);
+            if (m.startsWith('rustplay:')) return {{ error: m.slice(9).toUpperCase() }};
+            return {{ error: 'ROOT_NOT_FOUND' }};
+          }}
+          if (!root) return {{ error: 'ROOT_NOT_FOUND' }};
+
+          // Never part of an outline: not rendered, or pure markup noise.
+          const SKIP = new Set(['SCRIPT','STYLE','HEAD','META','LINK','TITLE','NOSCRIPT','TEMPLATE','BR','WBR']);
+          // Only these get the hit test; it is the expensive part of a state probe.
+          const INTERACTIVE = new Set(['button','link','textbox','checkbox','radio','combobox']);
+
+          const vis = (e) => {{
+            const r = e.getBoundingClientRect();
+            const cv = typeof e.checkVisibility === 'function'
+              ? e.checkVisibility({{checkOpacity: true, checkVisibilityCSS: true}})
+              : getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+            return cv && r.width > 0 && r.height > 0;
+          }};
+
+          const clean = (s) => String(s).trim().replace(/\s+/g, ' ');
+
+          // An element's own direct text, excluding every descendant's.
+          const own_text = (el) => clean(Array.from(el.childNodes)
+            .filter((n) => n.nodeType === 3)
+            .map((n) => n.nodeValue)
+            .join(' '));
+
+          const label_text = (el) => {{
+            if (el.id) {{
+              const scope = el.getRootNode();
+              const labels = scope.querySelectorAll ? scope.querySelectorAll('label[for]') : [];
+              for (const l of labels) {{
+                if (l.getAttribute('for') === el.id) return clean(l.textContent || '');
+              }}
+            }}
+            const wrap = el.closest ? el.closest('label') : null;
+            return wrap ? clean(wrap.textContent || '') : '';
+          }};
+
+          const get_name = (el) => {{
+            const aria = el.getAttribute('aria-label');
+            if (aria && aria.trim()) return clean(aria);
+            const own = own_text(el);
+            if (own) return own;
+            const tag = el.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {{
+              const lt = label_text(el);
+              if (lt) return lt;
+              if (el.placeholder) return clean(el.placeholder);
+              if (tag === 'INPUT' && ['button','submit','reset'].includes(el.type) && el.value) return clean(el.value);
+            }}
+            if (tag === 'IMG' && el.alt) return clean(el.alt);
+            const title = el.getAttribute('title');
+            if (title && title.trim()) return clean(title);
+            return '';
+          }};
+
+          const get_role = (el) => {{
+            if (el.tagName === 'IFRAME') return 'frame';
+            const role = el.getAttribute('role');
+            if (role) return role;
+            const tag = el.tagName.toLowerCase();
+            switch (tag) {{
+              case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6': return 'heading';
+              case 'button': return 'button';
+              case 'a': return el.hasAttribute('href') ? 'link' : 'generic';
+              case 'input':
+                if (['button','submit','reset'].includes(el.type)) return 'button';
+                if (el.type === 'checkbox') return 'checkbox';
+                if (el.type === 'radio') return 'radio';
+                return 'textbox';
+              case 'textarea': return 'textbox';
+              case 'select': return 'combobox';
+              case 'p': return 'paragraph';
+              case 'ul': case 'ol': return 'list';
+              case 'li': return 'listitem';
+              case 'table': return 'table';
+              case 'img': return 'img';
+              default: return tag;
+            }}
+          }};
+
+          // Same vocabulary probe_js reports, so an outline and a failed click
+          // describe an element with the same words.
+          const get_state = (el, role) => {{
+            const s = [];
+            const visible = vis(el);
+            s.push(visible ? 'visible' : 'hidden');
+            if (el.disabled === true || (el.closest && el.closest('fieldset[disabled]')) ||
+                el.getAttribute('aria-disabled') === 'true') s.push('disabled');
+            if (visible) {{
+              const r = el.getBoundingClientRect();
+              if (r.width < 1 || r.height < 1) s.push('zero_size');
+              else if (INTERACTIVE.has(role)) {{
+                const x = r.left + r.width / 2, y = r.top + r.height / 2;
+                let hit = document.elementFromPoint(x, y);
+                while (hit && hit.shadowRoot) {{
+                  const inner = hit.shadowRoot.elementFromPoint(x, y);
+                  if (!inner || inner === hit) break;
+                  hit = inner;
+                }}
+                if (hit && hit !== el && !el.contains(hit)) s.push('obscured');
+              }}
+            }}
+            const editable = (el instanceof HTMLTextAreaElement) || el.isContentEditable ||
+              (el instanceof HTMLInputElement &&
+                !['checkbox','radio','button','submit','reset','file','image','hidden','range','color'].includes(el.type));
+            if (editable && el.readOnly) s.push('not_editable');
+            return s;
+          }};
+
+          const max_n = {max_nodes}, max_b = {max_bytes};
+          const nodes = [];
+          let total = 2, truncated = false, stopped = false, idx = 0;
+          let start = 0;
+          if (cursor) start = Number(cursor.split(':')[1]) || 0;
+
+          // Returns false when the node does not fit the byte budget.
+          const emit = (el) => {{
+            const role = get_role(el);
+            const node = {{ ref: 'e' + idx + '@' + epoch, role, tag: el.tagName.toLowerCase() }};
+            if (el.id) node.id = el.id;
+            const state = get_state(el, role);
+            if (el.tagName === 'IFRAME') {{
+              state.push('not_traversed');
+              node.src = el.getAttribute('src') || '';
+            }}
+            node.state = state;
+            const name = get_name(el);
+            if (name) node.name = name;
+            // Rust fills this in; carry the empty cost here so the budget below
+            // accounts for the key an unflagged node ends up with.
+            node.flags = [];
+
+            let s = JSON.stringify(node);
+            if (total + s.length + 1 > max_b) {{
+              if (node.name) {{
+                const over = total + s.length + 1 - max_b;
+                const keep = node.name.length - over - 3;
+                if (keep > 0) node.name = node.name.slice(0, keep) + '...';
+                else delete node.name;
+                truncated = true;
+                s = JSON.stringify(node);
+              }}
+              if (total + s.length + 1 > max_b) {{ truncated = true; return false; }}
+            }}
+            total += s.length + 1;
+            reg.map.set(node.ref, el);
+            nodes.push(node);
+            return true;
+          }};
+
+          const walk = (el) => {{
+            if (stopped || el.nodeType !== 1 || SKIP.has(el.tagName)) return;
+            if (idx >= start && ({include_hidden} || vis(el))) {{
+              if (nodes.length >= max_n || !emit(el)) {{ stopped = true; return; }}
+            }}
+            idx++;
+            if (el.tagName === 'IFRAME') return; // frames are marked, never entered
+            if (el.shadowRoot) {{
+              for (const c of el.shadowRoot.childNodes) {{ walk(c); if (stopped) return; }}
+            }}
+            for (const c of el.childNodes) {{ walk(c); if (stopped) return; }}
+          }};
+
+          walk(root);
+
+          return {{
+            nodes,
+            epoch,
+            next_cursor: stopped ? (epoch + ':' + idx) : null,
+            truncated,
+          }};
+        }})()"#
+    )
+}
+
+/// Count matches without the actionability probe, so `assert_count` can still
+/// assert zero while reporting a bad `ref=` precisely.
+fn count_js(selector: &str) -> String {
+    let all = resolve_all(selector);
+    format!(
+        r#"(() => {{
+          let n;
+          try {{ n = Array.from({all}).length; }}
+          catch (err) {{
+            const m = String((err && err.message) || err);
+            if (m.startsWith('rustplay:')) return {{ state: m.slice(9) }};
+            return {{ state: 'invalid_selector', message: m }};
+          }}
+          return {{ state: 'ok', n }};
+        }})()"#
+    )
+}
+
 fn probe_js(selector: &str, mode: ProbeMode) -> String {
-    let sel = js_str(selector);
+    let lookup = resolve_el(selector);
     let tail = match mode {
         ProbeMode::Wait(WaitState::Attached) => "return el ? {state:'ok'} : {state:'not_found'};".to_string(),
         ProbeMode::Wait(WaitState::Detached) => "return el ? {state:'still_attached'} : {state:'ok'};".to_string(),
@@ -707,8 +1063,12 @@ fn probe_js(selector: &str, mode: ProbeMode) -> String {
             return cv && r.width > 0 && r.height > 0;
           }};
           let el;
-          try {{ el = document.querySelector({sel}); }}
-          catch (err) {{ return {{state:'invalid_selector', message: String(err && err.message || err)}}; }}
+          try {{ el = {lookup}; }}
+          catch (err) {{
+            const m = String(err && err.message || err);
+            if (m.startsWith('rustplay:')) return {{state: m.slice(9)}};
+            return {{state:'invalid_selector', message: m}};
+          }}
           {tail}
         }})()"#
     )
@@ -729,6 +1089,8 @@ fn not_actionable(selector: &str, last: &Value, ms: u64) -> RpError {
     let reason = match state_of(last) {
         "not_found" => return RpError::SelectorNotFound { selector: selector.into(), ms },
         "invalid_selector" => return invalid_selector(selector, last),
+        "stale_ref" => return RpError::StaleRef,
+        "ref_not_found" => return RpError::RefNotFound,
         "hidden" => NotActionable::Hidden,
         "disabled" => NotActionable::Disabled,
         "detached" => NotActionable::Detached,
@@ -787,5 +1149,22 @@ mod tests {
         assert!(s.starts_with('"') && s.ends_with('"'));
         let js = probe_js(r#"');alert(1)//"#, ProbeMode::Act { editable: false });
         assert!(js.contains(r#""');alert(1)//""#));
+    }
+
+    /// A ref comes back to us through a task file, so it is untrusted input and
+    /// must be quoted, never pasted into the probe as code.
+    #[test]
+    fn refs_are_safely_quoted() {
+        let hostile = r#"ref="); alert(1); ("@1"#;
+        let js = probe_js(hostile, ProbeMode::Act { editable: false });
+        // The payload survives only as one JSON string literal: its quotes are
+        // escaped, so the raw breakout sequence never appears as code.
+        assert!(js.contains(r#""\"); alert(1); (\"@1""#), "ref was not escaped: {js}");
+        assert!(!js.contains(r#""); alert(1); (""#), "ref escaped its string literal: {js}");
+        // And it still resolves through the registry, not querySelector.
+        assert!(js.contains("rustplay.refs"));
+
+        let counted = count_js(hostile);
+        assert!(counted.contains(r#""\"); alert(1); (\"@1""#), "ref was not escaped: {counted}");
     }
 }

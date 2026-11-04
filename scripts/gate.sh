@@ -32,6 +32,9 @@ fi
 step "integration tests (real Chromium, local fixtures)"
 cargo test --test integration
 
+step "observe: page outlines, ref addressing, guard per node"
+cargo test --test observe
+
 step "actionability hit test vs open shadow roots"
 cargo test --test shadow_hit_test
 

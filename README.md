@@ -42,7 +42,7 @@ For one job, yes: running short, untrusted, JSON-described browser tasks in isol
 
 | | rustplay | Playwright |
 |---|---|---|
-| Scripting | JSON task files (17 actions) | full TypeScript / Python / Java / .NET API |
+| Scripting | JSON task files (18 actions) | full TypeScript / Python / Java / .NET API |
 | Browsers | Chromium only | Chromium, Firefox, WebKit |
 | Isolation default | fresh browser process + profile per task, scrubbed env, optional cgroups / bwrap | shared browser, fresh context per test |
 | Resource limits | wall / CPU / memory per task | none built in |

@@ -324,6 +324,42 @@
           },
           {
             "type": "object",
+            "description": "Returns a compact, ref-addressable page outline. Needs: read.",
+            "additionalProperties": false,
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "observe"
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Subtree root; defaults to document."
+              },
+              "max_nodes": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 200
+              },
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 32768
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Opaque cursor from previous observe."
+              },
+              "include_hidden": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "Fixed delay. Prefer wait_for.",
             "additionalProperties": false,
             "required": [

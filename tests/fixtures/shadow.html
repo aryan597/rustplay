@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Shadow fixture</title>
+</head>
+<body>
+  <h1 id="title">Shadow fixture</h1>
+
+  <!-- Open shadow root: contents must appear in an outline with usable refs. -->
+  <div id="open-host"></div>
+
+  <!-- Closed shadow root: contents must never appear. -->
+  <div id="closed-host"></div>
+
+  <!-- Frames are marked but never entered. -->
+  <iframe id="frame" src="/data.txt" title="data frame" width="200" height="60"></iframe>
+
+  <script>
+    const open = document.getElementById('open-host').attachShadow({ mode: 'open' });
+    open.innerHTML =
+      '<button id="in-shadow">Shadow Button</button><p id="shadow-out">pending</p>';
+    open.getElementById('in-shadow').addEventListener('click', () => {
+      open.getElementById('shadow-out').textContent = 'shadow clicked';
+    });
+
+    const closed = document.getElementById('closed-host').attachShadow({ mode: 'closed' });
+    closed.innerHTML = '<button id="closed-button">Closed Button</button>';
+  </script>
+</body>
+</html>

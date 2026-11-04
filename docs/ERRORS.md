@@ -39,6 +39,9 @@ Codes are a stable API. `retryable: true` means an identical retry can succeed w
 | `CONFIG_INVALID` | bad task JSON, flag value, or unsafe setup (e.g. root without `--no-chrome-sandbox`) | no | 2 | message says what |
 | `CLEANUP_FAILED` | profile dir could not be removed (reported as a warning) | no | - | delete `rustplay-*` temp dirs |
 | `IO_ERROR` | local file error (task file, output) | no | 1 | message has the path |
+| `STALE_REF` | ref used after navigation or a new `observe` epoch | no | 1 | re-run `observe` |
+| `REF_NOT_FOUND` | ref never issued in this epoch | no | 1 | use a ref from current `observe` output |
+| `STALE_SNAPSHOT` | cursor used after navigation or epoch change | no | 1 | restart `observe` from the root |
 | `CANCELLED` | Ctrl-C; browsers were killed and profiles removed | no | 130 | - |
 
 Warnings (in the report's `warnings` array; the task still runs):

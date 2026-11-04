@@ -104,6 +104,15 @@ pub enum RpError {
     )]
     TcpTransportDeprecated,
 
+    #[error("stale ref: the page navigated or the registry was reset; re-run `observe`")]
+    StaleRef,
+
+    #[error("ref not found: element with this ref was never issued")]
+    RefNotFound,
+
+    #[error("stale snapshot: the page navigated since this cursor was issued")]
+    StaleSnapshot,
+
     #[error("cancelled")]
     Cancelled,
 }
@@ -175,6 +184,9 @@ impl RpError {
             Self::CdpPortExposed { .. } => "CDP_PORT_EXPOSED",
             Self::TransportUnsupported { .. } => "TRANSPORT_UNSUPPORTED",
             Self::TcpTransportDeprecated => "TCP_TRANSPORT_DEPRECATED",
+            Self::StaleRef => "STALE_REF",
+            Self::RefNotFound => "REF_NOT_FOUND",
+            Self::StaleSnapshot => "STALE_SNAPSHOT",
             Self::Cancelled => "CANCELLED",
         }
     }
@@ -244,6 +256,9 @@ impl RpError {
             }
             Self::TransportUnsupported { .. } => "use --cdp-transport tcp on this platform (deprecated)",
             Self::TcpTransportDeprecated => "drop --cdp-transport tcp; pipe is the default and opens no port",
+            Self::StaleRef => "the page navigated; re-run `observe` to get fresh refs",
+            Self::RefNotFound => "ensure the ref was returned by a previous `observe` in the current epoch",
+            Self::StaleSnapshot => "re-run `observe` from the root; cursors do not survive navigation",
             Self::Config { .. } => return None,
             Self::Io { .. } => return None,
             Self::Cancelled => return None,

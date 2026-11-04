@@ -71,6 +71,18 @@ pub enum Step {
     Eval {
         expression: String,
     },
+    Observe {
+        /// Subtree root. Defaults to the document.
+        selector: Option<String>,
+        /// Hard cap on nodes in this chunk. Default 200.
+        max_nodes: Option<usize>,
+        /// Hard cap on serialized bytes. Default 32 KiB.
+        max_bytes: Option<usize>,
+        /// Opaque cursor from a previous observe's `next_cursor`.
+        cursor: Option<String>,
+        #[serde(default)]
+        include_hidden: bool,
+    },
     Sleep {
         ms: u64,
     },
@@ -116,6 +128,7 @@ pub const ACTIONS: &[&str] = &[
     "attribute",
     "screenshot",
     "eval",
+    "observe",
     "sleep",
     "assert_text",
     "assert_visible",
@@ -138,6 +151,7 @@ impl Step {
             Step::Attribute { .. } => "attribute",
             Step::Screenshot { .. } => "screenshot",
             Step::Eval { .. } => "eval",
+            Step::Observe { .. } => "observe",
             Step::Sleep { .. } => "sleep",
             Step::AssertText { .. } => "assert_text",
             Step::AssertVisible { .. } => "assert_visible",
@@ -184,6 +198,13 @@ impl Step {
             }
             Step::Press { key, .. } => crate::session::parse_combo(key).map(|_| ()),
             Step::Eval { expression } => nonempty("expression", expression),
+            Step::Observe { selector, .. } => {
+                if let Some(s) = selector {
+                    nonempty("selector", s)
+                } else {
+                    Ok(())
+                }
+            }
             Step::Sleep { ms } if *ms > 60_000 => Err(RpError::config("sleep: max 60000ms")),
             Step::AssertText { selector, equals, contains, matches } => {
                 nonempty("selector", selector)?;
@@ -232,6 +253,9 @@ pub async fn execute(s: &mut Session, step: &Step) -> Result<StepOutput> {
         role.require(c)?;
     }
     let ms = s.config().timeouts.action_ms;
+    // `observe` scans per node, so it hands its flags up rather than being
+    // re-scanned wholesale below.
+    let mut observe_flags = Vec::new();
     let mut value = match step {
         Step::Goto { url } => s.goto(url).await?,
         Step::WaitFor { selector, state, timeout_ms } => s.wait_for(selector, *state, step_ms(s, *timeout_ms)).await?,
@@ -273,6 +297,12 @@ pub async fn execute(s: &mut Session, step: &Step) -> Result<StepOutput> {
             }
         }
         Step::Eval { expression } => s.eval(expression).await?,
+        Step::Observe { selector, max_nodes, max_bytes, cursor, include_hidden } => {
+            let (v, flags) =
+                s.observe(selector.as_deref(), *max_nodes, *max_bytes, cursor.as_deref(), *include_hidden).await?;
+            observe_flags = flags;
+            v
+        }
         Step::Sleep { ms } => {
             tokio::time::sleep(std::time::Duration::from_millis(*ms)).await;
             Value::Null
@@ -313,9 +343,9 @@ pub async fn execute(s: &mut Session, step: &Step) -> Result<StepOutput> {
             json!({ "passed": true })
         }
         Step::AssertCount { selector, equals } => {
-            let n = s.eval(&format!("document.querySelectorAll({}).length", crate::session::js_str(selector))).await?;
-            if n.as_u64() != Some(*equals) {
-                return Err(fail(format!("count of `{selector}`"), equals.to_string(), &n));
+            let n = s.count(selector).await?;
+            if n != *equals {
+                return Err(fail(format!("count of `{selector}`"), equals.to_string(), &json!(n)));
             }
             json!({ "passed": true })
         }
@@ -338,7 +368,7 @@ pub async fn execute(s: &mut Session, step: &Step) -> Result<StepOutput> {
     // Layer 06: page-derived strings are untrusted. Flag injection, mask PII.
     let page_derived =
         matches!(step, Step::Text { .. } | Step::Attribute { .. } | Step::Eval { .. } | Step::Goto { .. });
-    let injection_flags = if page_derived { guard::scan_value(&value) } else { Vec::new() };
+    let injection_flags = if page_derived { guard::scan_value(&value) } else { observe_flags };
     if page_derived && s.config().redact_pii {
         guard::redact_value(&mut value);
     }
@@ -363,6 +393,7 @@ mod tests {
           {"action":"attribute","selector":"a","name":"href","all":true},
           {"action":"screenshot","path":"a.png","full_page":true},
           {"action":"eval","expression":"1+1"},
+          {"action":"observe"},
           {"action":"sleep","ms":10},
           {"action":"assert_text","selector":"h1","contains":"Ex"},
           {"action":"assert_visible","selector":"h1"},

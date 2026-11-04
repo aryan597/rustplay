@@ -69,6 +69,7 @@ Source of truth: `actions::Step` and `actions::ACTIONS`. Schema: `docs/task.sche
 | `attribute` | read | `name`, `all`; untrusted |
 | `screenshot` | read (+write_files with `path`) | path confined to `--out-dir`; else inline base64 |
 | `eval` | eval (admin only) | page context, promises awaited |
+| `observe` | read | compact page outline, ref-addressable |
 | `sleep` | read | max 60000 ms; prefer `wait_for` |
 | `assert_text` | read | `equals` / `contains` / `matches` (regex) |
 | `assert_visible` | read | |
