@@ -181,9 +181,16 @@ fn v2_leaf_relocation_against_kernel() {
         eprintln!("SKIP: no cgroup2 mount");
         return;
     };
+    // The no-internal-processes rule only binds controllers that distribute a
+    // domain resource. `cpu` and `pids` are exempt: the kernel enables them in
+    // a populated cgroup without complaint (checked on 6.x and 7.0). Picking
+    // whatever the host happens to list first therefore makes this test depend
+    // on the host's delegation: adding `+cpu` at the root is enough to select
+    // an exempt controller and make the EBUSY assertion below bogus.
     let delegated = std::fs::read_to_string(mount.join("cgroup.subtree_control")).unwrap_or_default();
-    let Some(ctrl) = delegated.split_whitespace().next().map(String::from) else {
-        eprintln!("SKIP: no controller enabled at {}", mount.display());
+    let available: Vec<&str> = delegated.split_whitespace().collect();
+    let Some(ctrl) = ["memory", "hugetlb", "io"].into_iter().find(|c| available.contains(c)).map(String::from) else {
+        eprintln!("SKIP: no enforcing controller delegated at {} (have: `{delegated}`)", mount.display());
         return;
     };
     // Cleanup runs even if an assertion panics, so failures leave no cgroups behind.
@@ -223,8 +230,19 @@ fn v2_leaf_relocation_against_kernel() {
     let a = mk(&mut g, "rp-relocate");
     g.dirs.push(a.join(SUPERVISOR_CGROUP)); // removed before `a` (reverse order)
     let me = spawn(&mut g, &a);
-    let raw = std::fs::write(a.join("cgroup.subtree_control"), format!("+{ctrl}"));
-    assert_eq!(raw.unwrap_err().raw_os_error(), Some(libc::EBUSY), "kernel should refuse with a process inside");
+    match std::fs::write(a.join("cgroup.subtree_control"), format!("+{ctrl}")) {
+        Err(e) => {
+            assert_eq!(e.raw_os_error(), Some(libc::EBUSY), "kernel should refuse with a process inside")
+        }
+        // Everything below tests the workaround for that refusal. If a kernel
+        // stops refusing, the workaround is simply unreachable here: skip
+        // rather than fail, but say so, because it means `enable_controller`
+        // never relocates on this host.
+        Ok(()) => {
+            eprintln!("SKIP: this kernel enables {ctrl} in a populated cgroup; no relocation to exercise");
+            return;
+        }
+    }
     enable_controller(&a, &ctrl, me).expect("relocation should make it work");
     let sub = std::fs::read_to_string(a.join("cgroup.subtree_control")).unwrap();
     assert!(sub.split_whitespace().any(|c| c == ctrl), "{sub}");
