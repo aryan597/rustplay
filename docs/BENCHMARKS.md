@@ -12,8 +12,9 @@ python3 bench/report.py bench/results.json
 ## Method
 
 - **Same machine, same browser binary, same page, same steps.** Both tools launch the exact same Chromium executable (once with full Chromium `--headless=new`, once with `chrome-headless-shell`, which is Playwright's default headless mode). The page is `tests/fixtures/index.html`, served on 127.0.0.1 by a Python static server. No network.
-- **Task.** `goto`, type "Ferris" with per-key events (`type` in rustplay, `pressSequentially` in Playwright), click, read the result and assert it. Both wait for `load` on navigation.
-- **Interleaved.** rustplay and Playwright runs alternate, so thermal or cache drift hits both equally. The first runs of each scenario are discarded as warm-up.
+- **Task.** `goto`, type "Ferris" with per-key events (`type` in rustplay, `pressSequentially` in Playwright), click, read the result and assert it.
+- **Navigation wait is NOT matched, and this is a known defect.** Playwright's `page.goto` waits for the `load` event. rustplay's `goto` (`src/session.rs:339`) resolves on the `Page.navigate` acknowledgement plus one `Runtime.evaluate` round trip, so it returns once an execution context exists but before subresources finish. On this fixture the gap is near zero — `tests/fixtures/index.html` has no subresources, so `load` fires almost immediately — but the numbers below are not a like-for-like navigation comparison and would diverge on a realistic page. Fixing this (and pinning both tools to one documented wait semantic) is a prerequisite for any heavier fixture.
+- **Alternated, in fixed order.** Each iteration runs rustplay and then Playwright, so slow thermal or cache drift hits both roughly equally. The order is not counterbalanced, so a systematic first-mover or second-mover effect would not cancel. The first runs of each scenario are discarded as warm-up.
 - **Timing excludes memory sampling.** Memory is measured in a separate pass, because walking `/proc` every 20 ms costs real CPU on small machines.
 - **What "per task" means.** Launch browser, open page, run the steps, close browser. rustplay's figure is its own `duration_ms`; Playwright's is measured with `performance.now()` around the same span.
 - **One-shot CLI** includes starting the process itself (`rustplay open` vs `node script.mjs`), which is what a shell, CI step or agent tool call pays.
